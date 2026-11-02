@@ -6,7 +6,7 @@
 	"description": {
 		"": "Feuillures et rainures avec jeu : une armature, une ou plusieurs cibles usinées ; l'armature qui les touche seulement est allongée. Une seule ligne de timeline qui suit le meuble."
 	},
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"runOnStartup": true,
 	"supportedOS": "windows|mac",
 	"editEnabled": true

@@ -112,21 +112,12 @@ def _pieces(entrees, ident: str) -> tuple[list[fonction.Piece], list[str]]:
     messages: list[str] = []
     for i in range(selection.selectionCount):
         entite = selection.selection(i).entity
-        corps = adsk.fusion.BRepBody.cast(entite)
+        corps = _corps_de(entite)
         if corps is None:
             occurrence = adsk.fusion.Occurrence.cast(entite)
-            if occurrence is None:
-                continue
-            solides = [
-                occurrence.bRepBodies.item(j)
-                for j in range(occurrence.bRepBodies.count)
-                if occurrence.bRepBodies.item(j).isSolid and occurrence.bRepBodies.item(j).isVisible
-            ]
-            if len(solides) != 1:
-                if solides:
-                    messages.append(t("erreur.plusieurs_corps", nom=occurrence.component.name))
-                continue
-            corps = solides[0]
+            if occurrence is not None and len(_solides(occurrence)) > 1:
+                messages.append(t("erreur.plusieurs_corps", nom=occurrence.component.name))
+            continue
         if not any(meme_piece(corps, p.corps) for p in pieces):
             pieces.append(fonction.Piece(corps, nom_piece(corps)))
     return pieces, messages
@@ -170,6 +161,57 @@ def _analyser(entrees) -> fonction.Plan | None:
         _dialogue["plan"] = plan
         return plan
     return None
+
+
+def _solides(occurrence) -> list:
+    """Corps solides d'un composant choisi : les visibles s'il y en a, sinon tous (panneau caché)."""
+    tous = [occurrence.bRepBodies.item(j) for j in range(occurrence.bRepBodies.count)]
+    solides = [b for b in tous if b.isSolid]
+    visibles = [b for b in solides if b.isVisible]
+    return visibles or solides
+
+
+def _corps_de(entite):
+    """Le corps d'une entité choisie : elle-même, ou le corps solide unique d'un composant ; sinon None."""
+    corps = adsk.fusion.BRepBody.cast(entite)
+    if corps is not None:
+        return corps
+    occurrence = adsk.fusion.Occurrence.cast(entite)
+    if occurrence is None:
+        return None
+    solides = _solides(occurrence)
+    return solides[0] if len(solides) == 1 else None
+
+
+def _nettoyer_cibles(entrees) -> bool:
+    """« Cibles » sans l'armature ni doublon : Fusion peut y verser la sélection courante (changement de
+    ligne active, activation de plus). L'API ne retire pas une sélection seule : tout est vidé, les bonnes
+    remises (méthode de Cabineo, `_retirer`). Rend vrai si la ligne a été refaite."""
+    ligne = adsk.core.SelectionCommandInput.cast(entrees.itemById("cibles"))
+    armature = adsk.core.SelectionCommandInput.cast(entrees.itemById("armature"))
+    corps_armature = _corps_de(armature.selection(0).entity) if armature.selectionCount else None
+    entites = [ligne.selection(i).entity for i in range(ligne.selectionCount)]
+    gardees, vus = [], []
+    for e in entites:
+        corps = _corps_de(e)
+        if corps is not None:
+            if corps_armature is not None and meme_piece(corps, corps_armature):
+                continue
+            if any(meme_piece(corps, v) for v in vus):
+                continue
+            vus.append(corps)
+        gardees.append(e)
+    if len(gardees) == len(entites):
+        return False
+    _dialogue["occupe"] = True
+    try:
+        ligne.clearSelection()
+        for e in gardees:
+            ligne.addSelection(e)
+    finally:
+        _dialogue["occupe"] = False
+    journal().info("cibles : %d sélection(s) en trop retirée(s)", len(entites) - len(gardees))
+    return True
 
 
 def _focaliser_cibles(entrees) -> None:
@@ -253,25 +295,43 @@ class _EditionCreee(adsk.core.CommandCreatedEventHandler):
 
 class _EditionActivee(adsk.core.CommandEventHandler):
     """Recule la timeline juste avant la fonction (méthode validée par Cabineo), puis remet les pièces
-    lues sur ses dépendances."""
+    lues sur ses dépendances.
+
+    Une seule fois : Fusion peut rappeler `activate` pendant la commande (essai du 2026-11-02 : en
+    réédition, « Cibles » passait de 2 à 5 et, après Échap, l'armature restait sélectionnée). Un second
+    passage remettait les pièces une deuxième fois (l'armature, de trop dans sa ligne d'une seule pièce,
+    tombait dans « Cibles ») et notait comme position d'origine du marqueur la timeline déjà reculée."""
 
     def notify(self, args):
         commande = adsk.core.CommandEventArgs.cast(args).command
         entrees = commande.commandInputs
         try:
             edition = _dialogue["edition"]
+            if "marqueur" in edition:
+                journal().info("réédition : activation de plus, ignorée")
+                if edition.get("pret"):
+                    _nettoyer_cibles(entrees)
+                    _analyser(entrees)
+                return
             edition["marqueur"] = Marqueur(design_actif().timeline)
             fonction.reculer_avant(edition["fonction"])
             # Le recul reste hors de la transaction de l'aperçu, annulée à chaque changement.
             commande.beginStep()
             armature, cibles, _ = fonction.pieces_de(edition["fonction"])
-            adsk.core.SelectionCommandInput.cast(entrees.itemById("armature")).addSelection(en_contexte(armature))
-            selection = adsk.core.SelectionCommandInput.cast(entrees.itemById("cibles"))
-            for corps in cibles:
-                selection.addSelection(en_contexte(corps))
+            _dialogue["occupe"] = True
+            try:
+                ligne_armature = adsk.core.SelectionCommandInput.cast(entrees.itemById("armature"))
+                ligne_cibles = adsk.core.SelectionCommandInput.cast(entrees.itemById("cibles"))
+                ligne_armature.clearSelection()
+                ligne_cibles.clearSelection()
+                ligne_armature.addSelection(en_contexte(armature))
+                for corps in cibles:
+                    ligne_cibles.addSelection(en_contexte(corps))
+            finally:
+                _dialogue["occupe"] = False
             edition["pret"] = True
+            _nettoyer_cibles(entrees)
             _analyser(entrees)
-            _focaliser_cibles(entrees)
         except ErreurFeuillure as e:
             _afficher(entrees, str(e))
         except Exception:
@@ -283,10 +343,13 @@ class _Changement(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         a = adsk.core.InputChangedEventArgs.cast(args)
         entrees = _entrees()
+        if _dialogue.get("occupe"):
+            return  # sélection refaite par le plugin lui-même : traitée à la fin
         try:
             edition = _dialogue.get("edition")
             if edition is not None and not edition.get("pret"):
                 return  # activation pas encore faite : les pièces ne sont pas relues
+            _nettoyer_cibles(entrees)
             _analyser(entrees)
             if a.input.id == "armature":
                 _focaliser_cibles(entrees)
@@ -377,6 +440,7 @@ class _EditionValidee(adsk.core.CommandEventHandler):
             plan = _plan_valide(a.command.commandInputs)
             debut = time.perf_counter()
             f = fonction.mettre_a_jour(edition["fonction"], plan)
+            _vider_selections()
             edition["marqueur"].rendre()
             edition["rendu"] = True
             journal().info("réédition de %s en %.0f ms", f.name, (time.perf_counter() - debut) * 1000)
@@ -390,6 +454,21 @@ class _EditionValidee(adsk.core.CommandEventHandler):
             a.executeFailedMessage = t("commande.echec_reedition", detail=_derniere_ligne(trace))
 
 
+def _vider_selections() -> None:
+    commande = _dialogue.get("commande")
+    for ident in ("armature", "cibles"):
+        try:
+            ligne = adsk.core.SelectionCommandInput.cast(commande.commandInputs.itemById(ident)) if commande else None
+            if ligne is not None:
+                ligne.clearSelection()
+        except Exception:
+            pass  # dialogue déjà défait : la sélection générale est vidée juste après
+    try:
+        ui().activeSelections.clear()
+    except Exception:
+        journal().warning("sélection non vidée :\n%s", traceback.format_exc())
+
+
 class _Fermeture(adsk.core.CommandEventHandler):
     """Annulation ou échec d'une réédition : Fusion abandonne la transaction de la commande, mais pas
     forcément le recul fait avant `beginStep` ; on rend donc le marqueur."""
@@ -399,6 +478,9 @@ class _Fermeture(adsk.core.CommandEventHandler):
             graphiques = _dialogue.get("graphiques")
             if graphiques is not None:
                 graphiques.effacer()
+            # Sélections vidées avant de rendre le marqueur : sinon l'armature, lue timeline reculée, reste
+            # en surbrillance une fois la commande fermée (essai du 2026-11-02, même cachée).
+            _vider_selections()
             edition = _dialogue.get("edition")
             if edition and "marqueur" in edition and not edition.get("rendu"):
                 edition["marqueur"].rendre()

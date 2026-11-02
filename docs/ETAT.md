@@ -1,7 +1,7 @@
 # État du plugin Feuillure / rainure
 
 - Date : 2026-11-02
-- Version du manifest : **0.2.0** (0.1.0 le matin du 02/11)
+- Version du manifest : **0.2.1** (0.1.0 le matin du 02/11, 0.2.0 l'après-midi)
 - Légende : **[vérifié]** = constaté dans Fusion, preuve citée ; **[supposé]** = déduit du code ou des docs,
   pas constaté dans Fusion. Ce plugin n'a **pas encore tourné dans Fusion** : la session qui l'a écrit n'avait
   pas Fusion. Chaque brique reprend une méthode constatée dans un autre plugin de l'atelier. Premier essai de
@@ -19,13 +19,31 @@ l'armature est allongée de la profondeur vers les cibles qu'elle touche seuleme
 |---|---|---|
 | Calcul (chevauchement, contact, jeu, feuillure / rainure, caisson tourné, étagère entre deux côtés) | testé hors Fusion | [vérifié] pytest : résultat de `exemples/apres.step` au millième de mm³ (`tests/test_calcul.py`) |
 | Chevauchement, une cible (v0.1.0) | marche | [vérifié] essai de l'utilisateur, 2026-11-02 |
-| Contact (v0.1.0) | en erreur | [vérifié] essai de l'utilisateur ; v0.2.0 refait ce chemin (voir ci-dessous) |
+| Contact (v0.1.0) | en erreur | [vérifié] essai de l'utilisateur ; v0.2.0 refait ce chemin |
+| Contact, une armature et deux cibles (v0.2.0) | marche | [vérifié] essai de l'utilisateur, 2026-11-02 |
+| Réédition (v0.2.0) | en panne, corrigée en 0.2.1 | [vérifié] essai : « Cibles » passait de 2 à 5, armature en surbrillance après Échap ; correctif [supposé] |
 | Bouton dans SOLIDE → Modifier, dialogue, résumé, aperçu | marche en 0.1.0 | [vérifié] essai de l'utilisateur ; flux armature → cibles de la 0.2.0 [supposé] |
 | Une ligne de timeline, cibles d'autres composants comprises (fonctions emboîtées) | codé | [supposé] — Cabineo S1–S4 + Flight Case T7/T12/T17 |
 | Recalcul quand un panneau change en amont | codé | [supposé] — méthode Cabineo S2/S4 |
 | Réédition en place / par remplacement | codé | [supposé] — Cabineo S3, Flight Case T6 |
 | Textes en 4 langues | codé | [vérifié] pytest (mêmes clés, mêmes variables) |
 | Icône clair / sombre | générée | planche `docs/icones/planche.png` ; affichage dans Fusion [supposé] |
+
+## Version 0.2.1 (2026-11-02, après le deuxième essai)
+
+Constaté : création à une armature et deux cibles en contact, **bonne**. Réédition : « Cibles » passe de 2 à 5 ;
+Échap laisse l'armature en surbrillance bleue, même cachée.
+
+Cause [supposée, la plus probable] : Fusion rappelle `activate` pendant la commande. Le second passage remettait
+les pièces (2 cibles de plus, et l'armature de trop dans sa ligne d'une seule pièce, versée dans « Cibles » :
+2 + 2 + 1 = 5) et notait comme position d'origine du marqueur la timeline déjà reculée. Corrigé :
+
+- activation traitée une seule fois (marqueur noté une fois, pièces remises une fois, lignes vidées avant) ;
+- « Cibles » nettoyée à chaque changement : ni l'armature, ni doublon ;
+- à la fermeture (OK ou Échap), sélections vidées **avant** de rendre le marqueur ;
+- un composant dont le panneau est caché reste choisissable.
+
+Tests : `tests/test_dialogue.py` rejoue ces trois situations sans Fusion.
 
 ## Version 0.2.0 (2026-11-02, après le premier essai)
 
@@ -73,8 +91,8 @@ dossier `FeuillureRainure` → **Exécuter** (cocher Exécuter au démarrage).
 | V3 | Ouvrir `exemples/avant-chevauchement.step` ; Feuillure / rainure ; armature = un petit panneau, cibles = le grand ; OK ; idem avec l'autre petit panneau | Résumé « rainure 19,6 × 10,3 mm » ; une ligne « Rainure · <armature> · jeu 0,3 » par opération ; même forme que `exemples/apres.step` |
 | V4 | Même chose avec `exemples/avant-contact.step` | Armature allongée de 10 (orange dans l'aperçu), même cible usinée |
 | V4b | Une étagère posée entre deux côtés : armature = l'étagère, cibles = les deux côtés | Une ligne ; une rainure dans chaque côté ; étagère allongée aux deux bouts |
-| V5 | Double-clic sur la ligne, jeu 0,5, OK | La ligne reste à sa place, rainures de 20 × 10,5 |
-| V6 | Double-clic, puis Échap | Rien ne change ; le marqueur de timeline revient au bout |
+| V5 | Double-clic sur la ligne, jeu 0,5, OK | Le dialogue montre la même armature et les mêmes cibles (pas plus) ; la ligne reste à sa place, rainures de 20 × 10,5 |
+| V6 | Double-clic, puis Échap | Rien ne change ; le marqueur de timeline revient au bout ; plus rien en surbrillance |
 | V7 | Reculer la timeline avant la ligne, épaissir une armature, revenir au bout | La rainure suit, sans commande |
 | V8 | Thèmes clair, bleu foncé, gris foncé | Icône nette dans la barre, le menu et la timeline |
 | V9 | Enregistrer, arrêter l'add-in, rouvrir le fichier | Il s'ouvre, la géométrie reste ; relancer l'add-in, tout se recalcule |
