@@ -1,0 +1,15 @@
+Plugin fusion360.
+
+# Objectif : 
+
+- Créer des feuillures et rainures avec jeu (tolérance) dans 2 types de scénarios. 1. Quand les pièces rentre en colission / intéférence, et quand les pièces sont juste en contact
+
+# Fonctionnement :
+
+- L'utilisateur choisis les panneaux concernés (composants ou corps), comme pour une opération booléen "combiner". corps cible et armature
+- Corps cible subit un elevement de matière
+- Corps amature reste inchangé OU est agrandi pour prendre rentrer comme il faut dans la feuille / rainure
+- Aucun corps supprimé
+- L'utilisateur rentre le jeu / tolérance
+- L'utilisateur rentre la profondeur de la feuille / rainure
+- Une seul opération dans la timeline, donc un icone
