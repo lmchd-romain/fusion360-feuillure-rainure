@@ -4,9 +4,9 @@ la timeline).
 Tout l'état (définition, contrôle, handlers) vit dans des variables de module : Fusion libère les
 handlers qu'aucun objet ne référence, et le bouton deviendrait muet sans message (constat MobPrez).
 
-Ordre des gestes, comme une combinaison native : la cible, puis les armatures, puis le jeu et la
-profondeur. Le résumé dit, pour chaque armature, ce qui sera fait ; l'aperçu montre l'usinage en
-bleu et l'allongement des armatures en orange. L'aperçu se dessine dans `executePreview` seulement :
+Ordre des gestes (décidé le 2026-11-02) : l'armature, puis les cibles, puis le jeu et la profondeur. Le
+résumé dit, pour chaque cible, ce qui sera fait ; l'aperçu montre l'usinage en bleu et l'allongement de
+l'armature en orange. L'aperçu se dessine dans `executePreview` seulement :
 Fusion efface, avant chaque aperçu, ce qui a été dessiné ailleurs.
 """
 
@@ -54,16 +54,16 @@ _dialogue: dict = {}  # dialogue ouvert : plan, aperçu, édition
 
 
 def _remplir(entrees, r: Reglages) -> None:
-    cible = entrees.addSelectionInput("cible", t("commande.cible"), t("commande.cible_invite"))
-    cible.addSelectionFilter("SolidBodies")
-    cible.addSelectionFilter("Occurrences")
-    cible.setSelectionLimits(0, 1)
-    cible.tooltip = t("commande.cible_infobulle")
-    armatures = entrees.addSelectionInput("armatures", t("commande.armatures"), t("commande.armatures_invite"))
-    armatures.addSelectionFilter("SolidBodies")
-    armatures.addSelectionFilter("Occurrences")
-    armatures.setSelectionLimits(0, 0)
-    armatures.tooltip = t("commande.armatures_infobulle")
+    armature = entrees.addSelectionInput("armature", t("commande.armature"), t("commande.armature_invite"))
+    armature.addSelectionFilter("SolidBodies")
+    armature.addSelectionFilter("Occurrences")
+    armature.setSelectionLimits(0, 1)
+    armature.tooltip = t("commande.armature_infobulle")
+    cibles = entrees.addSelectionInput("cibles", t("commande.cibles"), t("commande.cibles_invite"))
+    cibles.addSelectionFilter("SolidBodies")
+    cibles.addSelectionFilter("Occurrences")
+    cibles.setSelectionLimits(0, 0)
+    cibles.tooltip = t("commande.cibles_infobulle")
     jeu = entrees.addValueInput(
         "jeu", t("commande.jeu"), "mm", adsk.core.ValueInput.createByString(expression_mm(r.expression_jeu, r.jeu))
     )
@@ -135,29 +135,29 @@ def _pieces(entrees, ident: str) -> tuple[list[fonction.Piece], list[str]]:
 def _analyser(entrees) -> fonction.Plan | None:
     """Refait le plan après chaque changement, puis le résumé. Rend le plan s'il est bon pour OK."""
     _dialogue["plan"] = None
-    _dialogue["apercu_analyses"] = []
+    _dialogue["apercu"] = []
     r = _lire(entrees)
-    cibles, messages = _pieces(entrees, "cible")
-    armatures, autres = _pieces(entrees, "armatures")
+    armatures, messages = _pieces(entrees, "armature")
+    cibles, autres = _pieces(entrees, "cibles")
     messages += autres
-    if not cibles:
+    if not armatures:
         _afficher(entrees, "\n".join(messages + [t("commande.invite")]))
         return None
-    cible = cibles[0]
-    if not armatures:
-        _afficher(entrees, "\n".join(messages + [t("commande.invite_armatures")]))
+    armature = armatures[0]
+    if not cibles:
+        _afficher(entrees, "\n".join(messages + [t("commande.invite_cibles")]))
         return None
-    boite_cible = boite_monde(cible.corps)
+    boite_armature = boite_monde(armature.corps)
     analyses: list[Analyse] = []
-    for p in armatures:
-        if meme_piece(p.corps, cible.corps):
-            analyses.append(Analyse(probleme="erreur.armature_est_la_cible"))
-        else:
-            analyses.append(analyser(boite_monde(p.corps), boite_cible, r.jeu, r.profondeur))
-    plan = fonction.Plan(cible, armatures, analyses, r)
-    _dialogue["apercu_analyses"] = analyses
-    _dialogue["apercu_cible"] = boite_cible
-    texte = resume([(p.nom, a) for p, a in zip(armatures, analyses)])
+    for p in cibles:
+        if meme_piece(p.corps, armature.corps):
+            analyses.append(Analyse(probleme="erreur.cible_est_l_armature"))
+            continue
+        boite = boite_monde(p.corps)
+        analyses.append(analyser(boite_armature, boite, r.jeu, r.profondeur))
+        _dialogue["apercu"].append((boite, analyses[-1]))
+    plan = fonction.Plan(armature, cibles, analyses, r)
+    texte = resume([(p.nom, a) for p, a in zip(cibles, analyses)])
     bon = all(a.utilisable for a in analyses)
     if bon:
         try:
@@ -172,10 +172,10 @@ def _analyser(entrees) -> fonction.Plan | None:
     return None
 
 
-def _focaliser_armatures(entrees) -> None:
-    cible = adsk.core.SelectionCommandInput.cast(entrees.itemById("cible"))
-    if cible.selectionCount:
-        adsk.core.SelectionCommandInput.cast(entrees.itemById("armatures")).hasFocus = True
+def _focaliser_cibles(entrees) -> None:
+    armature = adsk.core.SelectionCommandInput.cast(entrees.itemById("armature"))
+    if armature.selectionCount:
+        adsk.core.SelectionCommandInput.cast(entrees.itemById("cibles")).hasFocus = True
 
 
 def _connecter(commande, execution, activation) -> None:
@@ -196,7 +196,7 @@ def _connecter(commande, execution, activation) -> None:
 def _nouveau_dialogue(commande) -> None:
     _dialogue.clear()
     _dialogue["commande"] = commande
-    _dialogue["apercu"] = Apercu()
+    _dialogue["graphiques"] = Apercu()
 
 
 class _Creation(adsk.core.CommandCreatedEventHandler):
@@ -218,7 +218,7 @@ class _CreationActivee(adsk.core.CommandEventHandler):
         try:
             entrees = _entrees()
             _analyser(entrees)
-            _focaliser_armatures(entrees)
+            _focaliser_cibles(entrees)
         except Exception:
             journal().error("ouverture du dialogue :\n%s", traceback.format_exc())
 
@@ -230,8 +230,16 @@ class _EditionCreee(adsk.core.CommandCreatedEventHandler):
         try:
             commande = adsk.core.CommandCreatedEventArgs.cast(args).command
             selection = ui().activeSelections
-            editee = fonction.fonction_editee(selection.item(0).entity) if selection.count else None
+            entite = selection.item(0).entity if selection.count else None
+            editee = fonction.fonction_editee(entite) if entite is not None else None
             if editee is None:
+                ancienne = adsk.fusion.CustomFeature.cast(entite) if entite is not None else None
+                if (
+                    ancienne is not None
+                    and ancienne.definition is not None
+                    and ancienne.definition.id == fonction.DEFINITION_ID
+                ):
+                    raise ErreurFeuillure(t("commande.ancienne_version"))
                 raise ErreurFeuillure(t("commande.double_clic"))
             _nouveau_dialogue(commande)
             _dialogue["edition"] = {"fonction": editee}
@@ -256,14 +264,14 @@ class _EditionActivee(adsk.core.CommandEventHandler):
             fonction.reculer_avant(edition["fonction"])
             # Le recul reste hors de la transaction de l'aperçu, annulée à chaque changement.
             commande.beginStep()
-            cible, armatures, _ = fonction.pieces_de(edition["fonction"])
-            adsk.core.SelectionCommandInput.cast(entrees.itemById("cible")).addSelection(en_contexte(cible))
-            selection = adsk.core.SelectionCommandInput.cast(entrees.itemById("armatures"))
-            for corps in armatures:
+            armature, cibles, _ = fonction.pieces_de(edition["fonction"])
+            adsk.core.SelectionCommandInput.cast(entrees.itemById("armature")).addSelection(en_contexte(armature))
+            selection = adsk.core.SelectionCommandInput.cast(entrees.itemById("cibles"))
+            for corps in cibles:
                 selection.addSelection(en_contexte(corps))
             edition["pret"] = True
             _analyser(entrees)
-            _focaliser_armatures(entrees)
+            _focaliser_cibles(entrees)
         except ErreurFeuillure as e:
             _afficher(entrees, str(e))
         except Exception:
@@ -280,8 +288,8 @@ class _Changement(adsk.core.InputChangedEventHandler):
             if edition is not None and not edition.get("pret"):
                 return  # activation pas encore faite : les pièces ne sont pas relues
             _analyser(entrees)
-            if a.input.id == "cible":
-                _focaliser_armatures(entrees)
+            if a.input.id == "armature":
+                _focaliser_cibles(entrees)
         except ErreurFeuillure as e:
             _afficher(entrees, str(e))
         except Exception:
@@ -290,17 +298,17 @@ class _Changement(adsk.core.InputChangedEventHandler):
 
 
 class _Preselection(adsk.core.SelectionEventHandler):
-    """Dans « Armatures », la cible ne s'allume pas au survol."""
+    """Dans « Cibles », l'armature ne s'allume pas au survol."""
 
     def notify(self, args):
         a = adsk.core.SelectionEventArgs.cast(args)
         try:
             entree = a.activeInput
-            if entree is None or entree.id != "armatures":
+            if entree is None or entree.id != "cibles":
                 return
-            cibles, _ = _pieces(_entrees(), "cible")
+            armatures, _ = _pieces(_entrees(), "armature")
             corps = adsk.fusion.BRepBody.cast(a.selection.entity)
-            if cibles and corps is not None and meme_piece(corps, cibles[0].corps):
+            if armatures and corps is not None and meme_piece(corps, armatures[0].corps):
                 a.isSelectable = False
         except Exception:
             journal().error("présélection :\n%s", traceback.format_exc())
@@ -318,13 +326,19 @@ class _Validation(adsk.core.ValidateInputsEventHandler):
 class _Apercu(adsk.core.CommandEventHandler):
     def notify(self, args):
         try:
-            apercu: Apercu = _dialogue["apercu"]
-            apercu.effacer()
-            analyses = _dialogue.get("apercu_analyses") or []
-            if analyses:
-                apercu.montrer(design_actif().rootComponent, _dialogue["apercu_cible"], analyses)
+            graphiques: Apercu = _dialogue["graphiques"]
+            graphiques.effacer()
+            paires = _dialogue.get("apercu") or []
+            if paires:
+                graphiques.montrer(design_actif().rootComponent, paires)
         except Exception:
             journal().error("aperçu :\n%s", traceback.format_exc())
+
+
+def _derniere_ligne(trace: str) -> str:
+    """La cause en une ligne, pour que l'utilisateur puisse la recopier sans ouvrir le journal."""
+    lignes = [ligne.strip() for ligne in trace.strip().splitlines() if ligne.strip()]
+    return lignes[-1][:200] if lignes else "?"
 
 
 def _plan_valide(entrees) -> fonction.Plan:
@@ -338,7 +352,7 @@ class _Execution(adsk.core.CommandEventHandler):
     def notify(self, args):
         a = adsk.core.CommandEventArgs.cast(args)
         try:
-            _dialogue["apercu"].effacer()
+            _dialogue["graphiques"].effacer()
             design_parametrique()
             plan = _plan_valide(a.command.commandInputs)
             debut = time.perf_counter()
@@ -348,16 +362,17 @@ class _Execution(adsk.core.CommandEventHandler):
         except ErreurFeuillure as e:
             a.executeFailed, a.executeFailedMessage = True, str(e)
         except Exception:
-            journal().error("création :\n%s", traceback.format_exc())
+            trace = traceback.format_exc()
+            journal().error("création :\n%s", trace)
             a.executeFailed = True
-            a.executeFailedMessage = t("commande.echec")
+            a.executeFailedMessage = t("commande.echec", detail=_derniere_ligne(trace))
 
 
 class _EditionValidee(adsk.core.CommandEventHandler):
     def notify(self, args):
         a = adsk.core.CommandEventArgs.cast(args)
         try:
-            _dialogue["apercu"].effacer()
+            _dialogue["graphiques"].effacer()
             edition = _dialogue["edition"]
             plan = _plan_valide(a.command.commandInputs)
             debut = time.perf_counter()
@@ -369,9 +384,10 @@ class _EditionValidee(adsk.core.CommandEventHandler):
         except ErreurFeuillure as e:
             a.executeFailed, a.executeFailedMessage = True, str(e)
         except Exception:
-            journal().error("réédition :\n%s", traceback.format_exc())
+            trace = traceback.format_exc()
+            journal().error("réédition :\n%s", trace)
             a.executeFailed = True
-            a.executeFailedMessage = t("commande.echec_reedition")
+            a.executeFailedMessage = t("commande.echec_reedition", detail=_derniere_ligne(trace))
 
 
 class _Fermeture(adsk.core.CommandEventHandler):
@@ -380,9 +396,9 @@ class _Fermeture(adsk.core.CommandEventHandler):
 
     def notify(self, args):
         try:
-            apercu = _dialogue.get("apercu")
-            if apercu is not None:
-                apercu.effacer()
+            graphiques = _dialogue.get("graphiques")
+            if graphiques is not None:
+                graphiques.effacer()
             edition = _dialogue.get("edition")
             if edition and "marqueur" in edition and not edition.get("rendu"):
                 edition["marqueur"].rendre()

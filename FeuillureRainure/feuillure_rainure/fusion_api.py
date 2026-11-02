@@ -13,7 +13,7 @@ import adsk.core
 import adsk.fusion
 
 from .erreurs import ErreurFeuillure
-from .geometrie import Boite, Vec, unitaire
+from .geometrie import Boite, Vec, fois, longueur, scalaire, soustraire, unitaire, vectoriel
 from .journal import journal
 from .langues import t
 
@@ -137,10 +137,49 @@ def direction_monde(entite, v: Vec) -> Vec:
     return direction_vers(matrice_monde(entite), v)
 
 
+def _boite_exacte(n) -> Boite | None:
+    """Boîte d'un panneau lue sur son B-rep, dans le repère de son composant (mm) : épaisseur selon la
+    normale de sa plus grande face plane, longueur selon la plus longue arête droite de cette face,
+    étendues par ses sommets. Exacte pour un panneau rectangulaire, à tout angle (la boîte orientée
+    minimale de Fusion peut s'écarter du corps de quelques microns, et un contact se juge au micron)."""
+    planes = []
+    for i in range(n.faces.count):
+        f = n.faces.item(i)
+        plan = adsk.core.Plane.cast(f.geometry)
+        if plan is not None:
+            planes.append((f.area, f, plan))
+    sommets = [en_mm(n.vertices.item(i).geometry) for i in range(n.vertices.count)]
+    if not planes or len(sommets) < 4:
+        return None
+    _, face, plan = max(planes, key=lambda x: x[0])
+    w = unitaire((plan.normal.x, plan.normal.y, plan.normal.z))
+    lignes = [adsk.core.Line3D.cast(face.edges.item(i).geometry) for i in range(face.edges.count)]
+    lignes = [ligne for ligne in lignes if ligne is not None]
+    u = None
+    if lignes:
+        ligne = max(lignes, key=lambda l: l.startPoint.distanceTo(l.endPoint))
+        d = soustraire(en_mm(ligne.endPoint), en_mm(ligne.startPoint))
+        d = soustraire(d, fois(w, scalaire(d, w)))
+        if longueur(d) > 1e-9:
+            u = unitaire(d)
+    if u is None:
+        axe = (1.0, 0.0, 0.0) if abs(w[0]) < 0.9 else (0.0, 1.0, 0.0)
+        u = unitaire(vectoriel(w, axe))
+    return Boite.selon((u, vectoriel(w, u), w), sommets)
+
+
 def boite_monde(corps) -> Boite:
-    """Boîte orientée minimale du corps, en mm, dans le repère du monde."""
+    """Boîte du panneau, en mm, dans le repère du monde : lue sur son B-rep (exacte), sinon la boîte
+    orientée minimale de Fusion, sinon la boîte du composant."""
     n = natif(corps)
     m = matrice_monde(corps)
+    try:
+        b = _boite_exacte(n)
+        if b is not None:
+            centre = vers_monde(m, point(b.centre))
+            return Boite(centre, tuple(direction_vers(m, a) for a in b.axes), b.demi)
+    except Exception:
+        journal().warning("boîte exacte illisible pour %s :\n%s", n.name, traceback.format_exc())
     try:
         o = n.orientedMinimumBoundingBox
         axes = []

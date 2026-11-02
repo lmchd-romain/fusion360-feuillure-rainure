@@ -25,6 +25,7 @@ CONTACT = "contact"
 RAINURE = "rainure"
 FEUILLURE = "feuillure"
 AIRE_MIN = 1.0  # mm² : en deçà, deux faces qui se frôlent ne sont pas un contact
+TOL_CONTACT = 0.05  # mm : jour ou chevauchement plus petit que ça = les pièces se touchent (arrondis de Fusion)
 
 
 @dataclass(frozen=True)
@@ -71,12 +72,12 @@ def contact(a: Boite, t: Boite) -> tuple[int, int, float] | None:
             d_a = scalaire(n_a, a.centre) + a.demi[k]
             for m in range(3):
                 for n_t, d_t in plans_t[2 * m : 2 * m + 2]:
-                    if scalaire(n_a, n_t) > -1.0 + 1e-6 or abs(d_a + d_t) > TOL:
+                    if scalaire(n_a, n_t) > -1.0 + 1e-6 or abs(d_a + d_t) > TOL_CONTACT:
                         continue
                     face = list(a.face(k, s))
                     for i, (n, d) in enumerate(plans_t):
                         if i // 2 != m and face:
-                            face = couper_polygone(face, n, d)
+                            face = couper_polygone(face, n, d + TOL)
                     aire = aire_polygone(face) if len(face) >= 3 else 0.0
                     if aire > AIRE_MIN and (meilleur is None or aire > meilleur[2]):
                         meilleur = (k, s, aire)
@@ -116,7 +117,7 @@ def analyser(
     interieur = a.centre
     commun = a.couper(t)
     ep = epaisseurs(commun.sommets(), a) if not commun.vide else (0.0, 0.0, 0.0)
-    chevauche = not commun.vide and min(ep) > TOL
+    chevauche = not commun.vide and min(ep) > TOL_CONTACT
     if mode is None:
         if chevauche:
             mode = CHEVAUCHEMENT
@@ -174,7 +175,7 @@ def _contact(a: Boite, t: Boite, jeu: float, profondeur: float, entree: Vec, int
     commun = dict(mode=CONTACT, entree=entree, interieur=interieur)
     if profondeur <= 0:
         return Analyse(probleme="erreur.profondeur_nulle", outils=(a.agrandie(jeu),), **commun)
-    if avant < face_cible - TOL:
+    if avant < face_cible - TOL_CONTACT:
         # Recalcul : l'armature s'est écartée de la cible ; on ne l'allonge pas dans le vide.
         return Analyse(probleme="erreur.pas_de_contact", outils=(a.agrandie(jeu),), **commun)
     if face_cible + profondeur >= fond_cible - TOL:

@@ -1,6 +1,6 @@
 # Feuillure / rainure — conception
 
-Statut : **v0.1.0 construite, à vérifier dans Fusion** (recette `essai/recette`, liste « À vérifier » de
+Statut : **v0.2.0 construite** (une armature, plusieurs cibles), **à vérifier dans Fusion** (recette `essai/recette`, liste « À vérifier » de
 `docs/ETAT.md`). Légende : **(décidé)** l'utilisateur, **(mon choix)** l'agent, **[vérifié]** constaté dans
 Fusion (preuve citée), **[supposé]** pas encore constaté.
 
@@ -26,7 +26,8 @@ modifications en reculant dans la timeline.
 
 ## Objectifs v1
 
-1. Une cible, une ou plusieurs armatures, choisies comme des corps ou des composants (décidé).
+1. D'abord une armature, puis une ou plusieurs cibles, choisies comme des corps ou des composants (décidé le
+   2026-11-02 après le premier essai ; la v0.1 faisait l'inverse).
 2. Jeu unique, de chaque côté et au fond (décidé) ; armature en chevauchement inchangée, profondeur = son
    chevauchement (décidé) ; armature en contact allongée de la profondeur réglée (décidé).
 3. Une ligne de timeline, avec son icône, double-clic pour modifier (décidé).
@@ -34,7 +35,7 @@ modifications en reculant dans la timeline.
 
 ## Hors périmètre
 
-Plusieurs cibles d'un coup ; panneaux non rectangulaires suivis au plus près (la boîte du panneau fait foi) ;
+Plusieurs armatures d'un coup ; panneaux non rectangulaires suivis au plus près (la boîte du panneau fait foi) ;
 congés de fraise dans les angles (plugin Dogbone, qui peut se poser après).
 
 ## Anti-objectifs
@@ -49,14 +50,14 @@ congés de fraise dans les angles (plugin Dogbone, qui peut se poser après).
 
 | Champ | Type | Défaut | Rôle |
 |---|---|---|---|
-| Cible | sélection, corps ou composant, 1 | — | le panneau usiné |
-| Armatures | sélection, corps ou composants, 1 et plus | — | les panneaux qui s'emboîtent |
+| Armature | sélection, corps ou composant, 1 | — | le panneau qui s'emboîte |
+| Cibles | sélection, corps ou composants, 1 et plus | — | les panneaux usinés |
 | Jeu | valeur mm | 0,3 (dernier validé) | de chaque côté et au fond |
-| Profondeur | valeur mm | 10 (dernier validé) | enfoncement des armatures en contact |
-| Résumé | texte | — | une ligne par armature : « Étagère : rainure 19,6 × 10,3 mm (chevauchement de 10 mm, armature inchangée) » |
+| Profondeur | valeur mm | 10 (dernier validé) | enfoncement de l'armature dans les cibles qu'elle touche seulement |
+| Résumé | texte | — | une ligne par cible : « Côté gauche : rainure 19,6 × 10,3 mm (armature allongée de 10 mm) » |
 
-Un composant choisi donne son corps solide unique ; plusieurs corps : message, choisir le corps. La cible ne
-s'allume pas au survol dans « Armatures ». OK reste grisé tant qu'une armature pose problème.
+Un composant choisi donne son corps solide unique ; plusieurs corps : message, choisir le corps. L'armature ne
+s'allume pas au survol dans « Cibles ». OK reste grisé tant qu'une cible pose problème.
 
 ### Détection et calcul (noyau pur, `calcul.py`)
 
@@ -79,46 +80,51 @@ x 53,7 → 73,3, y 8,7 → 19 : rainure 19,6 × 10,3. Les deux armatures enlève
 
 ### Timeline (`fonction.py`)
 
-Une fonction personnalisée dans le composant de la cible :
+v0.1 faisait les allongements par une combinaison entre deux composants (outil dans la base de la cible) et lisait
+le volume d'un corps temporaire : au premier essai, le cas contact a échoué (cause exacte non lue, journal non
+transmis). v0.2 n'a plus que des combinaisons dans un seul composant, avec des corps natifs (Cabineo, constaté) :
 
-1. fonction de base de ce composant : corps [0] outil de coupe, puis un corps d'allongement par armature en
-   contact (calculés dans le monde, ramenés dans le repère du composant) ;
-2. la fonction, créée juste après sa base, ne regroupe d'abord qu'elle ; dépendances : la plus grande face de la
-   cible et de chaque armature, encore intactes ;
-3. une combinaison « joindre » par armature en contact, dans son composant, outil pris dans la base ;
-4. la combinaison « couper » de la cible, en dernier ;
-5. timeline reculée, la fonction étendue de la base à la découpe, timeline remise.
+1. base de l'armature, dans son composant : un allongement par cible en contact (ou un petit cube au cœur de
+   l'armature s'il n'y en a aucun), puis l'outil de chaque cible du même composant ;
+2. la fonction de l'opération, juste après ; dépendances : la plus grande face de l'armature et de chaque cible ;
+3. pour chaque cible d'un autre composant, dans ce composant : sa base (outil), sa fonction emboîtée, sa
+   découpe, sa fonction étendue ;
+4. les découpes des cibles du composant de l'armature ;
+5. la jonction des allongements à l'armature, en dernier ;
+6. la fonction de l'opération étendue de sa base à la jonction : une seule ligne.
 
-Les étapes 1, 2, 4, 5 sont la méthode de Cabineo [vérifié — Cabineo, résultats d'essai S1–S4]. Une combinaison
-entre composants, outil dans une base d'un autre composant, est créée par Fusion dans le composant du corps
-cible [vérifié — Cabineo, sonde S5]. Des opérations d'un autre composant entre les bornes d'une fonction restent
-sur sa ligne [vérifié — Flight Case, sondes T7, T12]. L'ensemble (étape 3 entre les bornes) : [supposé], à
-confirmer par la recette (R9).
+Briques : base + fonction + combinaison dans un composant [vérifié — Cabineo S1–S4] ; fonction emboîtée et
+opérations d'autres composants entre les bornes, une ligne [vérifié — Flight Case T7, T12, T17] ; l'ensemble
+ici : [supposé], recette R8, R12, R16.
 
-**Calcul** : rien tant que la découpe n'est pas regroupée ; ensuite, tous les corps de la base sont refaits
-depuis les pièces telles qu'elles sont juste avant la fonction ; chaque armature garde le mode choisi à sa
-création (sa direction d'entrée est gardée dans le repère de son composant). Une armature qui ne touche plus
-ou ne rentre plus : avertissement sur la ligne.
+Boîtes des panneaux lues sur le B-rep (normale de la plus grande face plane, plus longue arête, sommets) : exactes
+pour un panneau rectangulaire ; boîte orientée minimale de Fusion en repli. Contact à 0,05 mm près.
 
-**Réédition** (double-clic) : timeline reculée avant la fonction, dialogue prérempli. Même cible, mêmes
-armatures, mêmes modes : mise à jour en place [vérifié — Cabineo S3] ; sinon la fonction est supprimée et
-refaite au même rang [vérifié — Flight Case T6].
+**Calcul** : chaque fonction refait sa base (celle de l'opération : allongements, outils du même composant,
+petit cube ; une emboîtée : son outil), depuis les pièces telles qu'elles sont juste avant elle ; chaque cible
+garde le mode choisi à la création. Une cible que l'armature ne touche plus : avertissement sur la ligne.
+
+**Réédition** (double-clic, même sur une fonction emboîtée) : timeline reculée avant la ligne, dialogue prérempli.
+Même armature, mêmes cibles, mêmes modes : réglages réécrits et chaque base refaite en place [vérifié —
+Cabineo S3, pour une base] ; sinon la ligne est supprimée et refaite au même rang [vérifié — Flight Case T6, T15].
 
 **Fichier sans l'add-in** : la géométrie reste, icône générique, pas de recalcul [vérifié — Cabineo M2].
 
 ### Refus
 
-Cible ou armature allongée dans un composant utilisé plusieurs fois ; composant lié ; armature qui ne touche
-pas la cible ; profondeur ≥ épaisseur de la cible ; armature entièrement dans la cible ; jeu négatif.
+Cible ou armature allongée dans un composant utilisé plusieurs fois ; composant lié ; cible que l'armature ne
+touche pas ; cible qui est aussi l'armature ; profondeur ≥ épaisseur de la cible ; armature entièrement dans la
+cible ; jeu négatif.
 
 ## Questions pour la recette (et replis)
 
 | # | Question | Repli si non |
 |---|---|---|
-| Q1 | Les « joindre » d'autres composants entre les bornes restent-ils sur la ligne (R9) ? | une fonction par composant d'armature, à la suite (comme Cabineo) |
-| Q2 | La combinaison « joindre » accepte-t-elle un outil de la base d'un autre composant, vu depuis la racine (R10) ? | essai suivant dans le code : collection du composant de l'armature ; sinon base propre à l'armature |
-| Q3 | Le calcul suit-il une armature épaissie en amont (R5, R11) ? | commande « Mettre à jour » |
-| Q4 | Caisson tourné, sous-composants (R14, R15) ? | — |
+| Q1 | Fonctions emboîtées des cibles d'autres composants sur la ligne de l'opération (R8, R12) ? | groupe de timeline replié (Dogbone) |
+| Q2 | Allongement par jonction dans le composant de l'armature, cas contact (R9, R12) ? | — (combinaison d'un seul composant, méthode constatée) |
+| Q3 | Le calcul suit-il une armature épaissie en amont (R4, R10) ? | commande « Mettre à jour » |
+| Q4 | Réédition en place avec fonctions emboîtées (R13) ? | remplacement au même rang |
+| Q5 | Caisson tourné, armature et cible dans un même composant (R16) ? | — |
 
 ## Laissé au constructeur
 

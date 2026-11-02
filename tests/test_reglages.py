@@ -4,6 +4,7 @@ import pytest
 from feuillure_rainure import langues
 from feuillure_rainure.calcul import analyser
 from feuillure_rainure.erreurs import ErreurFeuillure
+from feuillure_rainure.geometrie import Boite
 from feuillure_rainure.reglages import (
     Reglages,
     depuis_json,
@@ -58,11 +59,11 @@ def test_expression_mm():
 def test_noms_de_timeline():
     r = Reglages()
     deux = [analyser(b, CIBLE, 0.3, 10) for b in (TRAVERSANTE, ARRETEE)]
-    assert nom_fonction(deux, r) == "Rainure ×2 · jeu 0,3"
-    assert nom_fonction(deux[:1], r) == "Rainure · jeu 0,3"
+    assert nom_fonction(deux, r, "Étagère") == "Rainure ×2 · Étagère · jeu 0,3"
+    assert nom_fonction(deux[:1], r, "Étagère") == "Rainure · Étagère · jeu 0,3"
     fond = analyser(*_feuillure(), 0.3, 10)
-    assert nom_fonction([fond], r) == "Feuillure · jeu 0,3"
-    assert nom_fonction([fond, deux[0]], r) == "Feuillure + rainure ×2 · jeu 0,3"
+    assert nom_fonction([fond], r, "Fond") == "Feuillure · Fond · jeu 0,3"
+    assert nom_fonction([fond, deux[0]], r, "Fond") == "Feuillure + rainure ×2 · Fond · jeu 0,3"
 
 
 def _feuillure():
@@ -72,19 +73,21 @@ def _feuillure():
 
 
 def test_resume_du_dialogue():
+    """Une ligne par cible : son nom, l'usinage, ce que devient l'armature."""
+    loin = Boite.alignee((300, 0, 0), (310, 5, 5))
     texte = resume(
         [
-            ("Étagère", analyser(TRAVERSANTE, CIBLE, 0.3, 10)),
-            ("Tablette", analyser(TRAVERSANTE_CONTACT, CIBLE, 0.3, 10)),
-            ("Loin", analyser(TRAVERSANTE.agrandie(0).__class__.alignee((300, 0, 0), (310, 5, 5)), CIBLE, 0.3, 10)),
+            ("Côté gauche", analyser(TRAVERSANTE, CIBLE, 0.3, 10)),
+            ("Côté droit", analyser(TRAVERSANTE_CONTACT, CIBLE, 0.3, 10)),
+            ("Dessus", analyser(loin, CIBLE, 0.3, 10)),
         ]
     )
     lignes = texte.splitlines()
-    assert lignes[0] == "Étagère : rainure 19,6 × 10,3 mm (chevauchement de 10 mm, armature inchangée)"
-    assert lignes[1] == "Tablette : rainure 19,6 × 10,3 mm (armature allongée de 10 mm)"
-    assert lignes[2] == "Loin : ne touche pas la cible"
-    assert lignes[3] == "2 armatures prêtes"
+    assert lignes[0] == "Côté gauche : rainure 19,6 × 10,3 mm (chevauchement de 10 mm, armature inchangée)"
+    assert lignes[1] == "Côté droit : rainure 19,6 × 10,3 mm (armature allongée de 10 mm)"
+    assert lignes[2] == "Dessus : l'armature ne la touche pas"
+    assert lignes[3] == "2 cibles prêtes"
 
 
 def test_resume_vide():
-    assert resume([]) == "Choisissez la cible, puis les armatures."
+    assert resume([]) == "Choisissez l'armature, puis les cibles."

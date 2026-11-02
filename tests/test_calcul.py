@@ -165,3 +165,35 @@ def test_contact_trouve_la_bonne_face():
     k, s, aire = contact(TRAVERSANTE_CONTACT, CIBLE)
     assert TRAVERSANTE_CONTACT.normale(k, s) == pytest.approx((0, -1, 0))
     assert aire == pytest.approx(19 * 200)
+
+
+def test_contact_malgre_un_jour_de_quelques_microns():
+    """Fusion arrondit : une armature posée à 0,01 mm de la cible est en contact."""
+    posee = Boite.alignee((54, 19.01, -200), (73, 232.42, 0))
+    a = analyser(posee, CIBLE, JEU, PROFONDEUR)
+    assert a.utilisable and a.mode == CONTACT and a.allongement == pytest.approx(10.01)
+
+
+def test_contact_malgre_un_chevauchement_de_quelques_microns():
+    """Un chevauchement de 0,01 mm est un contact, pas une rainure de 0,01."""
+    posee = Boite.alignee((54, 18.99, -200), (73, 232.42, 0))
+    a = analyser(posee, CIBLE, JEU, PROFONDEUR)
+    assert a.utilisable and a.mode == CONTACT and a.profondeur == pytest.approx(10.3)
+
+
+def test_jour_reel_pas_de_contact():
+    ecartee = Boite.alignee((54, 19.2, -200), (73, 232.42, 0))
+    assert analyser(ecartee, CIBLE, JEU, PROFONDEUR).probleme == "erreur.pas_de_contact"
+
+
+def test_une_armature_entre_deux_cibles():
+    """Étagère posée entre deux côtés : contact aux deux bouts, allongée de chaque côté."""
+    gauche = Boite.alignee((0, 0, 0), (19, 300, 700))
+    droite = Boite.alignee((581, 0, 0), (600, 300, 700))
+    etagere = Boite.alignee((19, 0, 300), (581, 300, 319))
+    for cote, sortie in ((gauche, (-1, 0, 0)), (droite, (1, 0, 0))):
+        a = analyser(etagere, cote, JEU, PROFONDEUR)
+        assert a.mode == CONTACT and a.type == RAINURE and a.entree == pytest.approx(sortie)
+        assert a.tranche.couper(cote).volume() == pytest.approx(10 * 300 * 19)
+        rainure = max((o.couper(cote) for o in a.outils), key=lambda p: p.volume())
+        assert rainure.volume() == pytest.approx(10.3 * 300 * 19.6)

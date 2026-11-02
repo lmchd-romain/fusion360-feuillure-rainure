@@ -177,6 +177,16 @@ class Boite:
         demi = (abs(maxi[0] - mini[0]) / 2, abs(maxi[1] - mini[1]) / 2, abs(maxi[2] - mini[2]) / 2)
         return Boite(centre, ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)), demi)
 
+    @staticmethod
+    def selon(axes: tuple[Vec, Vec, Vec], points: list[Vec]) -> Boite:
+        """La plus petite boîte d'axes donnés qui contient les points (axes orthonormés)."""
+        mini = [min(scalaire(p, a) for p in points) for a in axes]
+        maxi = [max(scalaire(p, a) for p in points) for a in axes]
+        centre = (0.0, 0.0, 0.0)
+        for k in range(3):
+            centre = ajouter(centre, fois(axes[k], (mini[k] + maxi[k]) / 2))
+        return Boite(centre, axes, tuple((maxi[k] - mini[k]) / 2 for k in range(3)))
+
     def cote(self, k: int) -> float:
         return 2.0 * self.demi[k]
 

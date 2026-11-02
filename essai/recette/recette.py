@@ -197,16 +197,17 @@ def _langue_active() -> str:
 # ------------------------------------------------------------------ pièces de test
 
 
-def panneau(parent, nom, x0, longueur, y0, y1, z0, z1):
-    """Boîte paramétrique dans son propre composant (méthode de la sonde Cabineo) : esquisse dans un plan
-    décalé de x0 du plan YZ, extrudée de `longueur` selon +X. Longueurs en mm."""
-    occ = parent.occurrences.addNewComponent(adsk.core.Matrix3D.create())
-    comp = occ.component
-    comp.name = nom
+def panneau(parent, nom, x0, longueur, y0, y1, z0, z1, composant=True):
+    """Boîte paramétrique (méthode de la sonde Cabineo) : esquisse dans un plan décalé de x0 du plan YZ,
+    extrudée de `longueur` selon +X. Dans son propre composant, ou corps de plus de `parent`. mm."""
+    comp = parent
+    if composant:
+        comp = parent.occurrences.addNewComponent(adsk.core.Matrix3D.create()).component
+        comp.name = nom
     entree_plan = comp.constructionPlanes.createInput()
     entree_plan.setByOffset(comp.yZConstructionPlane, _vi(f"{x0} mm"))
-    plan = comp.constructionPlanes.add(entree_plan)
-    esquisse = comp.sketches.add(plan)
+    plan_ = comp.constructionPlanes.add(entree_plan)
+    esquisse = comp.sketches.add(plan_)
     p1 = esquisse.modelToSketchSpace(adsk.core.Point3D.create(x0 / 10, y0 / 10, z0 / 10))
     p2 = esquisse.modelToSketchSpace(adsk.core.Point3D.create(x0 / 10, y1 / 10, z1 / 10))
     esquisse.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2)
@@ -225,14 +226,34 @@ def panneau(parent, nom, x0, longueur, y0, y1, z0, z1):
     return {"nom": nom, "comp": comp, "ext": extrusion}
 
 
+def corps(pan):
+    """Le corps du panneau, relu maintenant (par son nom : un composant peut en porter plusieurs)."""
+    comp = pan["comp"]
+    for i in range(comp.bRepBodies.count):
+        if comp.bRepBodies.item(i).name == pan["nom"]:
+            return comp.bRepBodies.item(i)
+    return comp.bRepBodies.item(0)
+
+
 def corps_vu(design, pan):
     """Le corps du panneau vu depuis la racine, comme une sélection à la souris."""
-    occ = design.rootComponent.allOccurrencesByComponent(pan["comp"]).item(0)
-    return pan["comp"].bRepBodies.item(0).createForAssemblyContext(occ)
+    racine = design.rootComponent
+    if pan["comp"] == racine:
+        return corps(pan)
+    occ = racine.allOccurrencesByComponent(pan["comp"]).item(0)
+    return corps(pan).createForAssemblyContext(occ)
 
 
 def volume(pan) -> float:
-    return sum(pan["comp"].bRepBodies.item(i).volume for i in range(pan["comp"].bRepBodies.count)) * MM3_PAR_CM3
+    return corps(pan).volume * MM3_PAR_CM3
+
+
+def corps_en_trop(*pans) -> int:
+    """Corps de plus que de panneaux dans leurs composants (un outil laissé derrière)."""
+    comps = {}
+    for p in pans:
+        comps.setdefault(p["comp"].entityToken, [p["comp"], 0])[1] += 1
+    return sum(c.bRepBodies.count - n for c, n in comps.values())
 
 
 def epaisseur(pan, mm: float) -> None:
@@ -250,15 +271,28 @@ def meuble(design, contact: bool, parent=None):
     return cible, traversante, arretee
 
 
-def plan(design, cible, armatures, jeu=0.3, profondeur=10.0):
-    """Ce que le dialogue préparerait pour ces pièces."""
+def plan(design, armature, cibles, jeu=0.3, profondeur=10.0):
+    """Ce que le dialogue préparerait : une armature, ses cibles."""
     f, c, a, r = _module("fonction"), _module("calcul"), _module("fusion_api"), _module("reglages")
-    vue_cible = corps_vu(design, cible) if isinstance(cible, dict) else cible
-    vues = [corps_vu(design, p) if isinstance(p, dict) else p for p in armatures]
-    boite = a.boite_monde(vue_cible)
+    vue = corps_vu(design, armature) if isinstance(armature, dict) else armature
+    vues = [corps_vu(design, p) if isinstance(p, dict) else p for p in cibles]
+    boite = a.boite_monde(vue)
     reglages = r.Reglages(jeu=jeu, profondeur=profondeur)
-    analyses = [c.analyser(a.boite_monde(v), boite, jeu, profondeur) for v in vues]
-    return f.Plan(f.Piece(vue_cible, "Cible"), [f.Piece(v, a.nom_piece(v)) for v in vues], analyses, reglages)
+    analyses = [c.analyser(boite, a.boite_monde(v), jeu, profondeur) for v in vues]
+    return f.Plan(f.Piece(vue, a.nom_piece(vue)), [f.Piece(v, a.nom_piece(v)) for v in vues], analyses, reglages)
+
+
+def reediter(design, fonction, jeu=0.3, garder=None):
+    """Double-clic + OK, joué par les fonctions du dialogue : timeline reculée, plan relu, mise à jour."""
+    f, a = _module("fonction"), _module("fusion_api")
+    marqueur = a.Marqueur(design.timeline)
+    f.reculer_avant(fonction)
+    armature, cibles, _ = f.pieces_de(fonction)
+    cibles = cibles if garder is None else [cibles[i] for i in garder]
+    nouvelle = f.mettre_a_jour(fonction, plan(design, armature, cibles, jeu=jeu))
+    marqueur.rendre()
+    adsk.doEvents()
+    return nouvelle
 
 
 def sain(fonction) -> bool:
@@ -269,243 +303,214 @@ def proche(mesure: float, attendu: float) -> bool:
     return abs(mesure - attendu) <= TOL_VOLUME
 
 
+def volumes(**pans) -> dict:
+    return {nom: round(volume(p), 3) for nom, p in pans.items()}
+
+
 # ------------------------------------------------------------------ scénarios
 
 
-def chevauchement(rec: Recette) -> None:
+def exemple(rec: Recette, contact: bool) -> None:
+    """Les fichiers de l'utilisateur : chaque armature, puis la cible, en deux opérations."""
+    cas = "contact" if contact else "chevauchement"
+    r0 = "R1" if not contact else "R7"
     design = rec.nouveau_document()
-    cible, traversante, arretee = meuble(design, contact=False)
+    cible, traversante, arretee = meuble(design, contact=contact)
     f = _module("fonction")
-    p = plan(design, cible, [traversante, arretee])
-    rec.verifier(
-        "R1",
-        "Chevauchement : deux rainures détectées",
-        "chevauchement ×2, rainure ×2",
-        lambda: (
-            [a.mode for a in p.analyses] == ["chevauchement"] * 2 and [a.type for a in p.analyses] == ["rainure"] * 2,
-            [(a.mode, a.type, round(a.largeur, 3), round(a.profondeur, 3)) for a in p.analyses],
-        ),
-    )
     avant = design.timeline.count
     parametres = design.userParameters.count
-    fonction = f.creer(p)
+    plans = [plan(design, traversante, [cible]), plan(design, arretee, [cible])]
+    modes = [p.analyses[0].mode for p in plans]
+    rec.verifier(r0, f"{cas} : modes détectés", f"{cas} ×2", lambda: (modes == [cas] * 2, modes))
+    fonctions = [f.creer(p) for p in plans]
     adsk.doEvents()
+    allonge = 19 * 10 if contact else 0
+    attendus = {
+        "cible": CIBLE_APRES,
+        "traversante": TRAVERSANTE + allonge * 200,
+        "arretee": ARRETEE + allonge * 106.282,
+    }
     rec.verifier(
-        "R2",
-        "Une seule ligne de timeline, saine",
-        f"{avant + 1} lignes, saine",
+        f"R{int(r0[1:]) + 1}",
+        f"{cas} : une ligne par opération, saines",
+        f"{avant + 2} lignes, 0 paramètre ajouté",
         lambda: (
-            design.timeline.count == avant + 1 and sain(fonction),
-            {"lignes": design.timeline.count, "sante": str(fonction.healthState), "nom": fonction.name},
-        ),
-    )
-    rec.verifier(
-        "R3",
-        "Cible usinée comme exemples/apres.step",
-        f"{CIBLE_APRES} mm³, 1 corps",
-        lambda: (
-            proche(volume(cible), CIBLE_APRES) and cible["comp"].bRepBodies.count == 1,
-            {"volume": round(volume(cible), 3), "corps": cible["comp"].bRepBodies.count},
-        ),
-    )
-    rec.verifier(
-        "R4",
-        "Armatures inchangées, aucun paramètre ajouté",
-        "volumes d'origine, 0 paramètre",
-        lambda: (
-            proche(volume(traversante), TRAVERSANTE)
-            and proche(volume(arretee), ARRETEE)
+            design.timeline.count == avant + 2
+            and all(sain(x) for x in fonctions)
             and design.userParameters.count == parametres,
             {
-                "traversante": round(volume(traversante), 3),
-                "arretee": round(volume(arretee), 3),
-                "parametres": design.userParameters.count,
+                "lignes": design.timeline.count,
+                "noms": [x.name for x in fonctions],
+                "sante": [str(x.healthState) for x in fonctions],
             },
         ),
     )
-    rec.capturer("R3", "chevauchement", "Deux rainures dans la cible, armatures en place ; une seule ligne de timeline")
-    epaisseur(traversante, 25)
     rec.verifier(
-        "R5",
-        "Armature épaissie en amont : la rainure suit",
-        f"{round(CIBLE_EPAISSE, 3)} mm³, saine",
+        f"R{int(r0[1:]) + 2}",
+        f"{cas} : cible comme exemples/apres.step, armatures {'allongées' if contact else 'inchangées'}",
+        json.dumps({k: round(v, 3) for k, v in attendus.items()}),
         lambda: (
-            proche(volume(cible), CIBLE_EPAISSE) and sain(fonction),
-            {"volume": round(volume(cible), 3), "sante": str(fonction.healthState)},
+            all(
+                proche(volume(p), attendus[n])
+                for n, p in (("cible", cible), ("traversante", traversante), ("arretee", arretee))
+            )
+            and corps_en_trop(cible, traversante, arretee) == 0,
+            volumes(cible=cible, traversante=traversante, arretee=arretee)
+            | {"en_trop": corps_en_trop(cible, traversante, arretee)},
+        ),
+    )
+    rec.capturer(f"R{int(r0[1:]) + 2}", cas, f"{cas} : rainures dans la cible, armatures dedans, sans jour visible")
+    epaisseur(traversante, 25)
+    epaisse = 25 * 213.42 * 200 + 25 * allonge / 19 * 200 if contact else 25 * 213.42 * 200
+    rec.verifier(
+        f"R{int(r0[1:]) + 3}",
+        f"{cas} : armature épaissie en amont, l'opération suit",
+        f"cible {round(CIBLE_EPAISSE, 3)}, armature {round(epaisse, 3)}",
+        lambda: (
+            proche(volume(cible), CIBLE_EPAISSE) and proche(volume(traversante), epaisse) and sain(fonctions[0]),
+            volumes(cible=cible, traversante=traversante),
         ),
     )
     epaisseur(traversante, 19)
-    a = _module("fusion_api")
-    marqueur = a.Marqueur(design.timeline)
-    jeton = fonction.entityToken
-    f.reculer_avant(fonction)
-    cible_vue, armatures, _ = f.pieces_de(fonction)
-    nouveau = plan(design, cible_vue, armatures, jeu=0.5)
-    editee = f.mettre_a_jour(fonction, nouveau)
-    marqueur.rendre()
+    if not contact:
+        jeton = fonctions[0].entityToken
+        editee = reediter(design, fonctions[0], jeu=0.5)
+        attendu = CIBLE_AVANT - 20 * 10.5 * 200 - 19.6 * 10.3 * 106.882
+        rec.verifier(
+            "R5",
+            "chevauchement : jeu 0,5 en réédition, en place",
+            f"même ligne, cible {round(attendu, 3)}",
+            lambda: (
+                editee.entityToken == jeton
+                and proche(volume(cible), attendu)
+                and design.timeline.markerPosition == design.timeline.count,
+                {"meme_ligne": editee.entityToken == jeton, "cible": round(volume(cible), 3), "nom": editee.name},
+            ),
+        )
+        fonctions[0] = editee
+    for x in reversed(fonctions):
+        x.deleteMe()
     adsk.doEvents()
     rec.verifier(
-        "R6",
-        "Réédition du jeu (0,5) en place",
-        f"même ligne, {round(CIBLE_JEU_05, 3)} mm³",
+        "R11" if contact else "R6",
+        f"{cas} : suppression, tout revient",
+        "volumes d'origine",
         lambda: (
-            editee.entityToken == jeton
-            and proche(volume(cible), CIBLE_JEU_05)
-            and design.timeline.markerPosition == design.timeline.count,
-            {"meme_ligne": editee.entityToken == jeton, "volume": round(volume(cible), 3), "nom": editee.name},
-        ),
-    )
-    editee.deleteMe()
-    adsk.doEvents()
-    rec.verifier(
-        "R7",
-        "Suppression : tout revient",
-        f"{CIBLE_AVANT} mm³, {avant} lignes",
-        lambda: (
-            proche(volume(cible), CIBLE_AVANT) and design.timeline.count == avant,
-            {"volume": round(volume(cible), 3), "lignes": design.timeline.count},
+            proche(volume(cible), CIBLE_AVANT)
+            and proche(volume(traversante), TRAVERSANTE)
+            and proche(volume(arretee), ARRETEE),
+            volumes(cible=cible, traversante=traversante, arretee=arretee),
         ),
     )
 
 
-def contact(rec: Recette) -> None:
+def etagere(rec: Recette) -> None:
+    """Une armature, deux cibles : étagère posée entre deux côtés, allongée aux deux bouts."""
     design = rec.nouveau_document()
-    cible, traversante, arretee = meuble(design, contact=True)
+    racine = design.rootComponent
+    gauche = panneau(racine, "Gauche", 0, 19, 0, 300, 0, 700)
+    droite = panneau(racine, "Droite", 581, 19, 0, 300, 0, 700)
+    tablette = panneau(racine, "Etagere", 19, 562, 0, 300, 300, 319)
     f = _module("fonction")
-    p = plan(design, cible, [traversante, arretee])
-    rec.verifier(
-        "R8",
-        "Contact : deux armatures à allonger de 10",
-        "contact ×2, allongement 10",
-        lambda: (
-            [a.mode for a in p.analyses] == ["contact"] * 2 and all(abs(a.allongement - 10) < 1e-6 for a in p.analyses),
-            [(a.mode, a.type, round(a.allongement, 3)) for a in p.analyses],
-        ),
-    )
     avant = design.timeline.count
+    p = plan(design, tablette, [gauche, droite])
     fonction = f.creer(p)
     adsk.doEvents()
-    rec.verifier(
-        "R9",
-        "Une seule ligne, allongements compris (autres composants)",
-        f"{avant + 1} lignes, saine",
-        lambda: (
-            design.timeline.count == avant + 1 and sain(fonction),
-            {"lignes": design.timeline.count, "sante": str(fonction.healthState)},
-        ),
-    )
-    attendus = (TRAVERSANTE + 19 * 10 * 200, ARRETEE + 19 * 10 * 106.282)
-    rec.verifier(
-        "R10",
-        "Cible usinée et armatures allongées",
-        f"cible {CIBLE_APRES}, armatures {attendus}",
-        lambda: (
-            proche(volume(cible), CIBLE_APRES)
-            and proche(volume(traversante), attendus[0])
-            and proche(volume(arretee), attendus[1])
-            and all(p_["comp"].bRepBodies.count == 1 for p_ in (cible, traversante, arretee)),
-            {
-                "cible": round(volume(cible), 3),
-                "traversante": round(volume(traversante), 3),
-                "arretee": round(volume(arretee), 3),
-            },
-        ),
-    )
-    rec.capturer("R10", "contact", "Armatures allongées dans les rainures (plus de jour au contact)")
-    epaisseur(traversante, 25)
-    epaisse = 25 * 213.42 * 200 + 25 * 10 * 200
-    rec.verifier(
-        "R11",
-        "Armature épaissie en amont : allongement et rainure suivent",
-        f"cible {round(CIBLE_EPAISSE, 3)}, armature {epaisse}",
-        lambda: (
-            proche(volume(cible), CIBLE_EPAISSE) and proche(volume(traversante), epaisse) and sain(fonction),
-            {"cible": round(volume(cible), 3), "traversante": round(volume(traversante), 3)},
-        ),
-    )
-    epaisseur(traversante, 19)
-    a = _module("fusion_api")
-    marqueur = a.Marqueur(design.timeline)
-    jeton = fonction.entityToken
-    f.reculer_avant(fonction)
-    cible_vue, armatures, _ = f.pieces_de(fonction)
-    nouveau = plan(design, cible_vue, armatures[1:])
-    remplacee = f.mettre_a_jour(fonction, nouveau)
-    marqueur.rendre()
-    adsk.doEvents()
+    cote_usine = 19 * 300 * 700 - 19.6 * 10.3 * 300
     rec.verifier(
         "R12",
-        "Réédition sans la première armature : remplacée au même rang",
-        f"nouvelle ligne, {avant + 1} lignes, cible {round(CIBLE_ARRETEE_SEULE, 3)}, traversante rendue",
+        "Étagère entre deux côtés : une ligne, deux rainures, deux allongements",
+        f"{avant + 1} lignes ; côtés {round(cote_usine, 3)} ; étagère {562 * 300 * 19 + 2 * 57000}",
         lambda: (
-            remplacee.entityToken != jeton
-            and design.timeline.count == avant + 1
-            and proche(volume(cible), CIBLE_ARRETEE_SEULE)
-            and proche(volume(traversante), TRAVERSANTE),
-            {
-                "lignes": design.timeline.count,
-                "cible": round(volume(cible), 3),
-                "traversante": round(volume(traversante), 3),
-            },
+            design.timeline.count == avant + 1
+            and sain(fonction)
+            and proche(volume(gauche), cote_usine)
+            and proche(volume(droite), cote_usine)
+            and proche(volume(tablette), 562 * 300 * 19 + 2 * 57000)
+            and corps_en_trop(gauche, droite, tablette) == 0,
+            volumes(gauche=gauche, droite=droite, etagere=tablette)
+            | {"lignes": design.timeline.count, "nom": fonction.name},
+        ),
+    )
+    rec.capturer("R12", "etagere", "Étagère allongée dans une rainure de chaque côté")
+    jeton = fonction.entityToken
+    editee = reediter(design, fonction, jeu=0.5)
+    cote_05 = 19 * 300 * 700 - 20 * 10.5 * 300
+    rec.verifier(
+        "R13",
+        "Étagère : jeu 0,5 en réédition, en place (fonctions emboîtées comprises)",
+        f"même ligne, côtés {round(cote_05, 3)}",
+        lambda: (
+            editee.entityToken == jeton and proche(volume(gauche), cote_05) and proche(volume(droite), cote_05),
+            volumes(gauche=gauche, droite=droite) | {"meme_ligne": editee.entityToken == jeton},
+        ),
+    )
+    remplacee = reediter(design, editee, jeu=0.3, garder=[0])
+    rec.verifier(
+        "R14",
+        "Étagère : réédition sans le côté droit, ligne refaite au même rang",
+        f"{avant + 1} lignes ; droite entière ; étagère {562 * 300 * 19 + 57000}",
+        lambda: (
+            design.timeline.count == avant + 1
+            and proche(volume(droite), 19 * 300 * 700)
+            and proche(volume(gauche), cote_usine)
+            and proche(volume(tablette), 562 * 300 * 19 + 57000),
+            volumes(gauche=gauche, droite=droite, etagere=tablette) | {"lignes": design.timeline.count},
         ),
     )
     remplacee.deleteMe()
     adsk.doEvents()
     rec.verifier(
-        "R13",
-        "Suppression : armatures et cible reviennent",
+        "R15",
+        "Étagère : suppression, tout revient",
         "volumes d'origine",
         lambda: (
-            proche(volume(cible), CIBLE_AVANT) and proche(volume(arretee), ARRETEE),
-            {"cible": round(volume(cible), 3), "arretee": round(volume(arretee), 3)},
+            proche(volume(gauche), 19 * 300 * 700) and proche(volume(tablette), 562 * 300 * 19),
+            volumes(gauche=gauche, etagere=tablette),
         ),
     )
 
 
-def caisson_tourne(rec: Recette) -> None:
-    """Pièces dans un sous-composant tourné de 30° : une armature en chevauchement, une en contact."""
+def meme_composant(rec: Recette) -> None:
+    """Armature et une cible corps d'un même composant (l'autre cible ailleurs), caisson tourné de 30°,
+    chevauchement d'un côté et contact de l'autre."""
     design = rec.nouveau_document()
     rotation = adsk.core.Matrix3D.create()
     rotation.setToRotation(math.radians(30), adsk.core.Vector3D.create(0, 0, 1), adsk.core.Point3D.create(0, 0, 0))
     caisson = design.rootComponent.occurrences.addNewComponent(rotation)
     caisson.component.name = "Caisson"
     parent = caisson.component
-    cible = panneau(parent, "Cible", 0, 200, 0, 19, -200, 0)
-    traversante = panneau(parent, "Traversante", 54, 19, 9, 222.42, -200, 0)
-    arretee = panneau(parent, "Arretee", 127, 19, 19, 232.42, -153.141, -46.859)
-    p = plan(design, cible, [traversante, arretee])
-    rec.verifier(
-        "R14",
-        "Caisson tourné : modes détectés",
-        "chevauchement puis contact",
-        lambda: (
-            [a.mode for a in p.analyses] == ["chevauchement", "contact"],
-            [(a.mode, round(a.profondeur, 3)) for a in p.analyses],
-        ),
-    )
+    gauche = panneau(parent, "Gauche", 0, 19, 0, 300, 0, 700, composant=False)
+    tablette = panneau(parent, "Etagere", 9, 572, 0, 300, 300, 319, composant=False)  # rentre de 10 à gauche
+    droite = panneau(parent, "Droite", 581, 19, 0, 300, 0, 700)
+    p = plan(design, tablette, [gauche, droite])
+    modes = [a.mode for a in p.analyses]
     fonction = _module("fonction").creer(p)
     adsk.doEvents()
+    cote_usine = 19 * 300 * 700 - 19.6 * 10.3 * 300
     rec.verifier(
-        "R15",
-        "Caisson tourné : usinage et allongement justes",
-        f"cible {CIBLE_APRES}",
+        "R16",
+        "Caisson tourné, même composant d'un côté : chevauchement + contact",
+        f"modes chevauchement/contact ; côtés {round(cote_usine, 3)} ; étagère {572 * 300 * 19 + 57000}",
         lambda: (
-            proche(volume(cible), CIBLE_APRES)
-            and proche(volume(arretee), ARRETEE + 19 * 10 * 106.282)
-            and sain(fonction),
-            {"cible": round(volume(cible), 3), "arretee": round(volume(arretee), 3)},
+            modes == ["chevauchement", "contact"]
+            and sain(fonction)
+            and proche(volume(gauche), cote_usine)
+            and proche(volume(droite), cote_usine)
+            and proche(volume(tablette), 572 * 300 * 19 + 57000)
+            and corps_en_trop(gauche, droite, tablette) == 0,
+            volumes(gauche=gauche, droite=droite, etagere=tablette) | {"modes": modes},
         ),
     )
-    rec.capturer("R15", "caisson-tourne", "Caisson tourné de 30° : rainures alignées sur les armatures")
+    rec.capturer("R16", "caisson-tourne", "Caisson tourné de 30° : rainures alignées sur l'étagère")
 
 
 def refus(rec: Recette) -> None:
     """Une cible utilisée deux fois est refusée avec un message, sans rien poser."""
     design = rec.nouveau_document()
     cible, traversante, _ = meuble(design, contact=False)
-    racine = design.rootComponent
-    racine.occurrences.addExistingComponent(cible["comp"], adsk.core.Matrix3D.create())
-    p = plan(design, cible, [traversante])
+    design.rootComponent.occurrences.addExistingComponent(cible["comp"], adsk.core.Matrix3D.create())
+    p = plan(design, traversante, [cible])
     avant = design.timeline.count
 
     def essai():
@@ -515,7 +520,7 @@ def refus(rec: Recette) -> None:
             return type(e).__name__ == "ErreurFeuillure" and design.timeline.count == avant, str(e)
         return False, "posée malgré une cible en deux exemplaires"
 
-    rec.verifier("R16", "Cible en deux exemplaires : refus expliqué", "ErreurFeuillure, rien posé", essai)
+    rec.verifier("R17", "Cible en deux exemplaires : refus expliqué", "ErreurFeuillure, rien posé", essai)
 
 
 def jouer():
@@ -537,18 +542,18 @@ def jouer():
                 "présent" if definitions.itemById("feuillureRainureCmd") else "absent",
             ),
         )
-        for scenario in (chevauchement, contact, caisson_tourne, refus):
+        scenarios = (
+            ("chevauchement", lambda: exemple(rec, contact=False)),
+            ("contact", lambda: exemple(rec, contact=True)),
+            ("etagere", lambda: etagere(rec)),
+            ("meme_composant", lambda: meme_composant(rec)),
+            ("refus", lambda: refus(rec)),
+        )
+        for nom, scenario in scenarios:
             try:
-                scenario(rec)
+                scenario()
             except Exception:
-                rec.noter(
-                    scenario.__name__,
-                    f"Scénario {scenario.__name__}",
-                    KO,
-                    None,
-                    "sans erreur",
-                    traceback.format_exc(limit=10),
-                )
+                rec.noter(nom, f"Scénario {nom}", KO, None, "sans erreur", traceback.format_exc(limit=10))
     finally:
         if a is not None:
             a.SANS_BOITE = False

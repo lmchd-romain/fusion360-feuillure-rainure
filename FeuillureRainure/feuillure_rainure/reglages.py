@@ -88,9 +88,9 @@ def avec(r: Reglages, **changements) -> Reglages:
     return replace(r, **changements)
 
 
-def nom_fonction(analyses: list[Analyse], r: Reglages) -> str:
-    """Nom de la ligne de timeline : « Rainure ×2 · jeu 0,3 », « Feuillure · jeu 0,3 »,
-    « Feuillure + rainure ×3 · jeu 0,3 »."""
+def nom_fonction(analyses: list[Analyse], r: Reglages, armature: str = "") -> str:
+    """Nom de la ligne de timeline : « Rainure ×2 · Étagère · jeu 0,3 », « Feuillure · Fond · jeu 0,3 »,
+    « Feuillure + rainure ×3 · Fond · jeu 0,3 » (le nombre de cibles, l'armature)."""
     types = [a.type for a in analyses if a.type]
     n = len(types)
     if not types or all(x == RAINURE for x in types):
@@ -100,11 +100,11 @@ def nom_fonction(analyses: list[Analyse], r: Reglages) -> str:
     else:
         cle = "timeline.mixte"
     quantite = f" ×{n}" if n > 1 else ""
-    return t(cle, n=quantite, jeu=nombre(r.jeu))
+    return t(cle, n=quantite, nom=armature, jeu=nombre(r.jeu))
 
 
 def ligne_resume(nom: str, a: Analyse) -> str:
-    """Une ligne du résumé du dialogue pour une armature."""
+    """Une ligne du résumé du dialogue pour une cible."""
     if a.probleme and not a.type:
         return t("resume.probleme", nom=nom, probleme=t(a.probleme, profondeur=nombre(a.enfoncement)))
     forme = t(f"resume.{a.type}", largeur=nombre(a.largeur), profondeur=nombre(a.profondeur))
@@ -120,7 +120,7 @@ def ligne_resume(nom: str, a: Analyse) -> str:
 
 
 def resume(lignes: list[tuple[str, Analyse]]) -> str:
-    """Le résumé complet : une ligne par armature, puis le compte."""
+    """Le résumé complet : une ligne par cible, puis le compte."""
     if not lignes:
         return t("commande.invite")
     textes = [ligne_resume(nom, a) for nom, a in lignes]

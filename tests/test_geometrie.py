@@ -61,3 +61,8 @@ def test_recouvrement():
 def test_etendue():
     assert CIBLE.etendue((0.0, 1.0, 0.0)) == pytest.approx((0, 19))
     assert CIBLE.agrandie(1).etendue((1.0, 0.0, 0.0)) == pytest.approx((-1, 201))
+
+
+def test_boite_selon_des_axes():
+    b = Boite.selon(((1.0, 0, 0), (0, 1.0, 0), (0, 0, 1.0)), [(0, 0, 0), (10, 2, 0), (5, 1, 4)])
+    assert b.centre == pytest.approx((5, 1, 2)) and b.demi == pytest.approx((5, 1, 2))

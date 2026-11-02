@@ -57,14 +57,17 @@ def _union(boites: list[Boite]) -> adsk.fusion.BRepBody | None:
 
 
 def _intersection(a: Boite, b: Boite) -> adsk.fusion.BRepBody | None:
+    """a ∩ b en corps temporaire ; None si Fusion refuse. Le noyau a déjà vérifié qu'elle n'est pas vide
+    (aucune lecture de volume sur un corps temporaire : rien ne prouve que Fusion l'accepte)."""
     if min(a.demi) <= 0 or min(b.demi) <= 0:
         return None
     corps = boite_temporaire(a)
     try:
         ok = _tbm().booleanOperation(corps, boite_temporaire(b), adsk.fusion.BooleanTypes.IntersectionBooleanType)
     except Exception:
+        journal().warning("intersection refusée :\n%s", traceback.format_exc())
         return None
-    return corps if ok and corps.volume > 1e-9 else None
+    return corps if ok else None
 
 
 def petit_cube(centre_mm: Vec) -> adsk.fusion.BRepBody:
@@ -91,22 +94,28 @@ def vers_composant(corps: adsk.fusion.BRepBody, monde_du_composant: adsk.core.Ma
     return corps
 
 
-def outil_de_coupe(analyses: list[Analyse], cible: Boite, monde_cible: adsk.core.Matrix3D) -> adsk.fusion.BRepBody:
-    """L'union des usinages (jeu compris) ; aucune : un petit cube hors de la cible (la découpe reste
-    en place et reprendra au prochain recalcul)."""
-    corps = _union([b for a in analyses for b in a.outils])
+def outil_de_coupe(a: Analyse, cible: Boite, monde: adsk.core.Matrix3D) -> adsk.fusion.BRepBody:
+    """L'usinage d'une cible (jeu compris), dans le repère du composant de matrice `monde`. Rien à usiner :
+    un petit cube hors de la cible (la découpe reste en place et reprendra au prochain recalcul)."""
+    corps = _union(list(a.outils))
     if corps is None:
         corps = petit_cube(hors_de(cible))
-    return vers_composant(corps, monde_cible)
+    return vers_composant(corps, monde)
 
 
-def allongement(a: Analyse, cible: Boite, monde_cible: adsk.core.Matrix3D) -> adsk.fusion.BRepBody:
-    """Ce que l'armature gagne : sa tranche d'allongement, coupée par la boîte de la cible. Rien à
-    ajouter : un petit cube au cœur de l'armature (la jonction ne change rien)."""
+def allongement(a: Analyse, cible: Boite, monde: adsk.core.Matrix3D) -> adsk.fusion.BRepBody:
+    """Ce que l'armature gagne face à une cible : sa tranche d'allongement, coupée par la boîte de la
+    cible, dans le repère du composant de l'armature. Rien à ajouter : un petit cube au cœur de
+    l'armature (la jonction ne change rien)."""
     corps = _intersection(a.tranche, cible) if a.tranche is not None and a.utilisable else None
     if corps is None:
         corps = petit_cube(a.interieur or cible.centre)
-    return vers_composant(corps, monde_cible)
+    return vers_composant(corps, monde)
+
+
+def remplissage(interieur: Vec, monde: adsk.core.Matrix3D) -> adsk.fusion.BRepBody:
+    """Petit cube au cœur de l'armature : outil de la jonction quand aucune cible ne l'allonge."""
+    return vers_composant(petit_cube(interieur), monde)
 
 
 def _couleur(rgb: tuple[int, int, int]):
@@ -129,10 +138,11 @@ class Apercu:
                 pass
         self._groupes.clear()
 
-    def montrer(self, racine: adsk.fusion.Component, cible: Boite, analyses: list[Analyse]) -> None:
+    def montrer(self, racine: adsk.fusion.Component, paires: list[tuple[Boite, Analyse]]) -> None:
+        """`paires` : (boîte de la cible, analyse), une par cible."""
         groupe = racine.customGraphicsGroups.add()
         self._groupes.append(groupe)
-        for a in analyses:
+        for cible, a in paires:
             try:
                 if a.outils:
                     usinage = _union(list(a.outils))
