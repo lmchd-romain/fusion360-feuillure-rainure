@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# État local de l'add-in
+*.log
+FeuillureRainure/derniers_reglages.json
+
+# Réglages d'éditeur créés par Fusion à l'ajout d'un complément
+.vscode/
+
+# Fichiers système
+Thumbs.db
+desktop.ini
+.DS_Store

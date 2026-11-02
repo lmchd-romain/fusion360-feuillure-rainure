@@ -1,0 +1,13 @@
+{
+	"autodeskProduct": "Fusion360",
+	"type": "addin",
+	"id": "0134ae06-1eff-42e0-acf7-3e446f9b0b23",
+	"author": "FeuillureRainure",
+	"description": {
+		"": "Feuillures et rainures avec jeu entre panneaux : la cible est usinée, les armatures qui la touchent seulement sont allongées. Une seule ligne de timeline qui suit le meuble."
+	},
+	"version": "0.1.0",
+	"runOnStartup": true,
+	"supportedOS": "windows|mac",
+	"editEnabled": true
+}
