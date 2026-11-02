@@ -23,6 +23,17 @@ qui la touchent seulement sont allongées de la profondeur. Voir `README.md`.
 | Textes en 4 langues | codé | [vérifié] pytest (mêmes clés, mêmes variables) |
 | Icône clair / sombre | générée | planche `docs/icones/planche.png` ; affichage dans Fusion [supposé] |
 
+## Relecture du code (2026-11-02)
+
+Relecture indépendante de la couche Fusion, sans Fusion (lecture du code et de la doc de l'API). Corrigé :
+
+1. Plusieurs armatures en contact : la 2e jonction prenait le mauvais corps de la base (hors édition,
+   `BaseFeature.bodies` ne rend que les corps restants). Jonctions faites du dernier rang au premier, corps
+   pris dans un instantané lu juste après la base.
+2. Réédition en place : la direction d'entrée des armatures est réécrite avec les réglages.
+3. Dépendance : la forme native est essayée même si la vue depuis la racine lève.
+4. Marqueur de timeline parti du tout début : remis au début après une réédition.
+
 ## Avancement estimé
 
 **60 %** : tout est codé et le calcul est prouvé ; reste à le voir tourner dans Fusion (recette, puis la liste

@@ -234,6 +234,8 @@ class Marqueur:
         if self.au_bout:
             if self.timeline.markerPosition < self.timeline.count:
                 exiger(self.timeline.moveToEnd(), "etape.fin_timeline")
-        elif self.objet is not None and self.objet.isValid:
+        elif self.objet is None:
+            exiger(self.timeline.moveToBeginning(), "etape.retour_marqueur")  # marqueur parti du tout début
+        elif self.objet.isValid:
             exiger(self.objet.rollTo(False), "etape.retour_marqueur")
         # Objet remplacé (réédition par remplacement) : le marqueur est déjà au bon endroit.

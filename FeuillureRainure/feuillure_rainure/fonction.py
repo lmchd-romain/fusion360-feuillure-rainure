@@ -158,9 +158,9 @@ def reference(corps) -> adsk.fusion.BRepFace:
 def _dependre(ajouter, ident: str, entite) -> None:
     """La pièce vue depuis la racine (forme validée par l'essai Cabineo), sinon native.
     `ajouter` rend faux (CustomFeatureInput) ou lève (CustomFeatureDependencies) en cas d'échec."""
-    for forme in (en_contexte(entite), natif(entite)):
+    for forme in (en_contexte, natif):
         try:
-            if ajouter(ident, forme):
+            if ajouter(ident, forme(entite)):
                 return
         except Exception:
             journal().info("dépendance « %s » refusée sous une forme :\n%s", ident, traceback.format_exc())
@@ -224,6 +224,7 @@ def creer(plan: Plan) -> adsk.fusion.CustomFeature:
             exiger(composant.bRepBodies.add(c, base), "etape.ajout_outil")
     finally:
         exiger(base.finishEdit(), "etape.fin_edition_base")
+    instantane = [base.bodies.item(i) for i in range(base.bodies.count)]
 
     entree = composant.features.customFeatures.createInput(_definition)
     _dependre(entree.addDependency, CIBLE, reference(cible))
@@ -236,14 +237,15 @@ def creer(plan: Plan) -> adsk.fusion.CustomFeature:
     fonction.attributes.add(GROUPE, "reglages", vers_json(plan.r))
     fonction.attributes.add(GROUPE, "armatures", json.dumps(infos))
 
-    for (n, j, occurrence), info in zip(reperes, infos):
-        if info["corps"] < 0:
-            continue
-        armature = _relire(design, n, j)
-        _joindre(design, armature, occurrence, base.bodies.item(info["corps"]), occurrence_cible)
+    # Hors édition, `BaseFeature.bodies` ne rend que les corps encore là : chaque jonction en consomme un.
+    # Du dernier rang au premier, les rangs restants ne bougent pas ; l'instantané sert tant qu'il est valide.
+    jonctions = sorted(((info["corps"], r) for r, info in zip(reperes, infos) if info["corps"] > 0), reverse=True)
+    for rang, (n, j, occurrence) in jonctions:
+        outil = instantane[rang] if rang < len(instantane) and instantane[rang].isValid else base.bodies.item(rang)
+        _joindre(design, _relire(design, n, j), occurrence, outil, occurrence_cible)
 
     outils = adsk.core.ObjectCollection.create()
-    outils.add(base.bodies.item(0))
+    outils.add(instantane[0] if instantane[0].isValid else base.bodies.item(0))
     entree_coupe = composant.features.combineFeatures.createInput(_relire(design, natif_cible, jeton_cible), outils)
     entree_coupe.operation = adsk.fusion.FeatureOperations.CutFeatureOperation
     entree_coupe.isKeepToolBodies = False
@@ -429,6 +431,7 @@ def mettre_a_jour(fonction, plan: Plan) -> adsk.fusion.CustomFeature:
     fonction = natif(fonction)
     if meme_structure(fonction, plan):
         fonction.attributes.add(GROUPE, "reglages", vers_json(plan.r))
+        fonction.attributes.add(GROUPE, "armatures", json.dumps(_infos(plan)))  # mêmes rangs, entrée à jour
         fonction.name = nom_fonction(plan.analyses, plan.r)
         cible, _, liste = pieces_de(fonction)
         _remplacer_corps(fonction, cible, plan.analyses, liste)
